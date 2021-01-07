@@ -1,3 +1,4 @@
+#include <gazebo/physics/physics.hh>
 #include <gazebo/common/Plugin.hh>
 #include <ros/ros.h>
 #include "gazebo_ros_link_attacher.h"
@@ -25,7 +26,8 @@ namespace gazebo
 
   void GazeboRosLinkAttacher::Load(physics::WorldPtr _world, sdf::ElementPtr /*_sdf*/)
   {
-    // Make sure the ROS node for Gazebo has already been initialized                                                                                    
+    // Make sure the ROS node for Gazebo has already been initialized
+    ROS_INFO_STREAM("link attacher: Loading ros_link_attacher_plugin with libgazebo_ros_link_attacher.so");
     if (!ros::isInitialized())
     {
       ROS_FATAL_STREAM("A ROS node for Gazebo has not been initialized, unable to load plugin. "
@@ -110,6 +112,62 @@ namespace gazebo
 
     ROS_DEBUG_STREAM("Links are: "  << l1->GetName() << " and " << l2->GetName());
 
+    ROS_INFO_STREAM_NAMED("vacuum_gripper", "before recast: l2->GetName(): "<< l2->GetName() );
+    ROS_INFO_STREAM_NAMED("vacuum_gripper", "before_recast: m2->GetName(): "<< m2->GetName() );
+
+    // Determine the nearest box
+#if GAZEBO_MAJOR_VERSION >= 8
+    ignition::math::Pose3d parent_pose = l1->WorldPose();
+    //Search the models and put them into a vector
+    physics::Model_V models = world->Models();
+#else
+    ignition::math::Pose3d parent_pose = l1->GetWorldPose().Ign();
+    physics::Model_V models = world->GetModels();
+#endif
+    ROS_INFO_STREAM_NAMED("vacuum_gripper", "gazebo_ros_vacuum_gripper: l1->GetName(): "<< l1->GetName() );
+    ROS_INFO_STREAM_NAMED("vacuum_gripper", "gazebo_ros_vacuum_gripper: m1->GetName(): "<< m1->GetName() );
+    ROS_INFO_STREAM_NAMED("vacuum_gripper", "gazebo_ros_vacuum_gripper: models.size(): "<< models.size() );
+    for (size_t i = 0; i < models.size(); i++) {
+      if (models[i]->GetName() == l1->GetName() ||
+          models[i]->GetName() == m1->GetName())
+      {
+        //Exclude the models in the vector with the same name as robot vacuum gripper name and the robot name. 
+        //This is to avoid interference between the vacuum gripper and robot links
+        continue;
+      }
+      //The model to carry by the suction gripper can contain different links so use a vector to contain the links of the model
+      physics::Link_V links = models[i]->GetLinks();
+      ROS_INFO_STREAM_NAMED("vacuum_gripper", "after exclusion of robot models[i]->GetName(): "<< models[i]->GetName() );
+      ROS_INFO_STREAM_NAMED("vacuum_gripper", "gazebo_ros_vacuum_gripper: links.size(): "<< links.size() );
+      for (size_t j = 0; j < links.size(); j++) {
+#if GAZEBO_MAJOR_VERSION >= 8
+        ignition::math::Pose3d link_pose = links[j]->WorldPose();
+#else
+        ignition::math::Pose3d link_pose = links[j]->GetWorldPose().Ign();
+#endif
+        ignition::math::Pose3d diff = parent_pose - link_pose;
+        double norm = diff.Pos().Length();
+        ROS_INFO_STREAM_NAMED("vacuum_gripper", "norm: "<< norm );
+        ROS_INFO_STREAM_NAMED("vacuum_gripper", "after norm links[j]->GetName(): "<< links[j]->GetName() );
+        ROS_INFO_STREAM_NAMED("vacuum_gripper", "after norm  models[i]->GetName(): "<< models[i]->GetName() );
+        //Distance between the vacuum gripper link and the model link in this loop
+        if (norm < 0.1) {
+#if GAZEBO_MAJOR_VERSION >= 8
+	  m2 = models[i];
+	  l2 = links[j]; 
+          ROS_INFO_STREAM_NAMED("vacuum_gripper", "after_recast: l2->GetName(): "<< l2->GetName() );
+          ROS_INFO_STREAM_NAMED("vacuum_gripper", "after_recast: m2->GetName(): "<< m2->GetName() );
+#else
+          //links[j]->SetLinearVel(l1->GetWorldLinearVel());
+          //links[j]->SetAngularVel(l1->GetWorldAngularVel());
+#endif
+        }
+      }
+    }
+
+    //j.m2 = m2;
+    //j.l2 = l2;   
+    //End change
     ROS_DEBUG_STREAM("Creating revolute joint on model: '" << model1 << "'");
     j.joint = this->physics->CreateJoint("revolute", m1);
     this->joints.push_back(j);
